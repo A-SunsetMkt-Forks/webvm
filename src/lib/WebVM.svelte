@@ -18,7 +18,9 @@
 
 	var term = null;
 	var cx = null;
+	var fitAddon = null;
 	var cxReadFunc = null;
+	var blockCache = null;
 	var processCount = 0;
 	var curVT = 0;
 	function writeData(buf, vt)
@@ -128,13 +130,38 @@
 			clearInterval(activityEventsInterval);
 		activityEventsInterval = setInterval(cleanupEvents, 2000);
 	}
+	function computeXTermFontSize()
+	{
+		return parseInt(getComputedStyle(document.body).fontSize);
+	}
+	function setScreenSize(display)
+	{
+		var mult = 1.0;
+		var displayWidth = display.offsetWidth;
+		var displayHeight = display.offsetHeight;
+		var minWidth = 1024;
+		var minHeight = 768;
+		if(displayWidth < minWidth)
+			mult = minWidth / displayWidth;
+		if(displayHeight < minHeight)
+			mult = Math.max(mult, minHeight / displayHeight);
+		cx.setKmsCanvas(display, displayWidth * mult, displayHeight * mult);
+	}
+	function handleResize()
+	{
+		term.options.fontSize = computeXTermFontSize();
+		fitAddon.fit();
+		const display = document.getElementById("display");
+		if(display)
+			setScreenSize(display);
+	}
 	async function initTerminal()
 	{
 		const { Terminal } = await import('@xterm/xterm');
 		const { FitAddon } = await import('@xterm/addon-fit');
 		const { WebLinksAddon } = await import('@xterm/addon-web-links');
-		term = new Terminal({cursorBlink:true, convertEol:true, fontFamily:"monospace", fontWeight: 400, fontWeightBold: 700});
-		var fitAddon = new FitAddon();
+		term = new Terminal({cursorBlink:true, convertEol:true, fontFamily:"monospace", fontWeight: 400, fontWeightBold: 700, fontSize: computeXTermFontSize()});
+		fitAddon = new FitAddon();
 		term.loadAddon(fitAddon);
 		var linkAddon = new WebLinksAddon();
 		term.loadAddon(linkAddon);
@@ -142,7 +169,7 @@
 		term.open(consoleDiv);
 		term.scrollToTop();
 		fitAddon.fit();
-		window.addEventListener("resize", function(ev){ fitAddon.fit(); });
+		window.addEventListener("resize", handleResize);
 		term.focus();
 		term.onData(readData);
 		// Avoid undesired default DnD handling
@@ -176,7 +203,7 @@
 			return;
 		// Raise the display to the foreground
 		const display = document.getElementById("display");
-		display.style.zIndex = 5;
+		display.parentElement.style.zIndex = 5;
 		plausible("Display activated");
 	}
 	function handleProcessCreated()
@@ -222,7 +249,8 @@
 			default:
 				throw new Error("Unrecognized device type");
 		}
-		var overlayDevice = await CheerpX.OverlayDevice.create(blockDevice, await CheerpX.IDBDevice.create(cacheId));
+		blockCache = await CheerpX.IDBDevice.create(cacheId);
+		var overlayDevice = await CheerpX.OverlayDevice.create(blockDevice, blockCache);
 		var webDevice = await CheerpX.WebDevice.create("");
 		var dataDevice = await CheerpX.DataDevice.create();
 		var mountPoints = [
@@ -256,7 +284,7 @@
 		const display = document.getElementById("display");
 		if(display)
 		{
-			cx.setKmsCanvas(display, 1024, 768);
+			setScreenSize(display);
 			cx.setActivateConsole(handleActivateConsole);
 		}
 		// Run the command in a loop, in case the user exits
@@ -272,14 +300,24 @@
 		await cx.networkLogin();
 		w.location.href = await startLogin();
 	}
+	async function handleReset()
+	{
+		// Be robust before initialization
+		if(blockCache == null)
+			return;
+		await blockCache.reset();
+		location.reload();
+	}
 </script>
 
 <main class="relative w-full h-full">
 	<Nav />
 	<div class="absolute top-10 bottom-0 left-0 right-0">
-		<SideBar on:connect={handleConnect}/>
+		<SideBar on:connect={handleConnect} on:reset={handleReset}/>
 		{#if configObj.needsDisplay}
-			<canvas class="absolute top-0 bottom-0 left-14 right-0" width="1024" height="768" id="display"></canvas>
+			<div class="absolute top-0 bottom-0 left-14 right-0">
+				<canvas class="w-full h-full" id="display"></canvas>
+			</div>
 		{/if}
 		<div class="absolute top-0 bottom-0 left-14 right-0 p-1 scrollbar" id="console">
 		</div>
